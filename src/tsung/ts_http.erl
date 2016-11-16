@@ -146,8 +146,12 @@ get_message2(Req=#http_request{method=options}) ->
 get_message2(Req=#http_request{method=put}) ->
     ts_http_common:http_body(?PUT, Req);
 
+get_message2(Req=#http_request{method=connect}) ->
+  ts_http_common:http_no_body(?CONNECT, Req);
+
 get_message2(Req=#http_request{method=patch}) ->
     ts_http_common:http_body(?PATCH, Req).
+
 
 %%----------------------------------------------------------------------
 %% Function: parse/2

@@ -42,6 +42,7 @@
          http_body/2,
          http_no_body/2,
          parse/2,
+         parse2/2,
          parse_req/1,
          parse_req/2,
          get_line/1
@@ -288,39 +289,9 @@ parse(closed, State=#state_rcv{session=Http}) ->
     {State#state_rcv{session=reset_session(Http), ack_done = true}, [], true};
 
 parse(Data, State=#state_rcv{session=HTTP}) when element(1,HTTP#http.status)  == none;
-                                                 HTTP#http.partial == true ->
-
-    List = binary_to_list(Data),
-    TotalSize = size(Data),
-    Header = State#state_rcv.acc ++ List,
-
-    case parse_headers(HTTP, Header, State#state_rcv.host) of
-        %% Partial header:
-        {more, HTTPRec, Tail} ->
-            ?LOGF("Partial Header: [HTTP=~p : Tail=~p]~n",[HTTPRec, Tail],?DEB),
-            {State#state_rcv{ack_done=false,session=HTTPRec,acc=Tail},[],false};
-        %% Complete header, chunked encoding
-        {ok, Http=#http{content_length=0, chunk_toread=0}, Tail} ->
-            NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
-            case parse_chunked(Tail, State#state_rcv{session=Http, acc=[]}) of
-                {NewState=#state_rcv{ack_done=false, session=NewHttp}, Opts} ->
-                    {NewState#state_rcv{session=NewHttp#http{session_cookies=NewCookies}}, Opts, false};
-                {NewState=#state_rcv{session=NewHttp}, Opts} ->
-                    {NewState#state_rcv{acc=[],session=NewHttp#http{session_cookies=NewCookies}}, Opts, Http#http.close}
-            end;
-        {ok, Http=#http{content_length=0, close=true}, _} ->
-            %% no content length, close=true: the server will close the connection
-            NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
-            {State#state_rcv{ack_done = false,
-                             datasize = TotalSize,
-                             session=Http#http{session_cookies=NewCookies}}, [], true};
-        {ok, Http=#http{status={100,_}}, _} -> % Status 100 Continue, ignore.
-            %% FIXME: not tested
-            {State#state_rcv{ack_done=false,session=reset_session(Http)},[],false};
-        {ok, Http, Tail} ->
-            NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
-            check_resp_size(Http#http{session_cookies=NewCookies}, length(Tail), State#state_rcv{acc=[]}, TotalSize, State#state_rcv.dump)
-    end;
+  HTTP#http.partial == true ->
+  {S, O, C, _Http} = parse2(Data, State),
+  {S, O, C};
 
 %% continued chunked transfer
 parse(Data, State=#state_rcv{session=Http}) when Http#http.chunk_toread >=0 ->
@@ -345,6 +316,41 @@ parse(Data,  State=#state_rcv{session=Http, datasize=PreviousSize}) ->
             {State#state_rcv{session = Http#http{body_size = Size}, ack_done = false,
                              datasize = DataSize+PreviousSize}, [], false}
     end.
+
+parse2(Data, State=#state_rcv{session=HTTP}) when element(1,HTTP#http.status)  == none;
+  HTTP#http.partial == true ->
+  List = binary_to_list(Data),
+  TotalSize = size(Data),
+  Header = State#state_rcv.acc ++ List,
+
+  case parse_headers(HTTP, Header, State#state_rcv.host) of
+    %% Partial header:
+    {more, HTTPRec, Tail} ->
+      ?LOGF("Partial Header: [HTTP=~p : Tail=~p]~n",[HTTPRec, Tail],?DEB),
+      {State#state_rcv{ack_done=false,session=HTTPRec,acc=Tail},[],false, none};
+    %% Complete header, chunked encoding
+    {ok, Http=#http{content_length=0, chunk_toread=0}, Tail, Http} ->
+      NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
+      case parse_chunked(Tail, State#state_rcv{session=Http, acc=[]}) of
+        {NewState=#state_rcv{ack_done=false, session=NewHttp}, Opts} ->
+          {NewState#state_rcv{session=NewHttp#http{session_cookies=NewCookies}}, Opts, false, Http};
+        {NewState=#state_rcv{session=NewHttp}, Opts} ->
+          {NewState#state_rcv{acc=[],session=NewHttp#http{session_cookies=NewCookies}}, Opts, Http#http.close, Http}
+      end;
+    {ok, Http=#http{content_length=0, close=true}, _} ->
+      %% no content length, close=true: the server will close the connection
+      NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
+      {State#state_rcv{ack_done = false,
+        datasize = TotalSize,
+        session=Http#http{session_cookies=NewCookies}}, [], true, Http};
+    {ok, Http=#http{status={100,_}}, _} -> % Status 100 Continue, ignore.
+      %% FIXME: not tested
+      {State#state_rcv{ack_done=false,session=reset_session(Http)},[],false, Http};
+    {ok, Http, Tail} ->
+      NewCookies = concat_cookies(Http#http.cookie, Http#http.session_cookies),
+      {S, O, C} = check_resp_size(Http#http{session_cookies=NewCookies}, length(Tail), State#state_rcv{acc=[]}, TotalSize, State#state_rcv.dump),
+      {S, O, C, Http}
+  end.
 
 %%----------------------------------------------------------------------
 %% Func: check_resp_size/5

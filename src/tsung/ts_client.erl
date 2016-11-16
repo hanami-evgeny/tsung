@@ -35,6 +35,7 @@
 %%% to the client at anytime (full bidirectional protocol, as jabber
 %%% for ex)
 
+-include("ts_http.hrl").
 -include("ts_config.hrl").
 -include("ts_profile.hrl").
 
@@ -147,6 +148,45 @@ init(#session{ id           = SessionId,
                             rate_limit = RateConf,
                             dynvars    = DynVars
                            }}.
+
+debug_state(State, Msg) ->
+  ?LOGF("State (in ~p) is: socket: ~p ; ~n ip: ~p ; ~n timeout: ~p ; ~n retries: ~p ; ~n hibernate: ~p ; ~n host: ~p ; ~n port: ~p ; ~n protocol: ~p ; ~n proto_opts: ~p ; ~n bidi: ~p ; ~n session_id: ~p ; ~n request: ~p ; ~n persistent: ~p ; ~n timestamp: ~p ; ~n starttime: ~p  ; ~n count: ~p ; ~n maxcount: ~p ; ~n ack_done: ~p ; ~n send_timestamp: ~p ; ~n page_timestamp: ~p ; ~n acc: ~p ; ~n buffer: ~p ; ~n session: ~p ; ~n datasize: ~p ; ~n id: ~p ; ~n size_mon_thresh: ~p ; ~n  size_mon: ~p ; ~n dynvars: ~p ; ~n clienttype: ~p ; ~n transactions: ~p ; ~n rate_limit: ~p ; ~n dump: ~p ; ~n connect_done: ~p ; ~n dumped_call: ~p ; ~n", [
+    Msg,
+    State#state_rcv.socket,
+    State#state_rcv.ip,
+    State#state_rcv.timeout,
+    State#state_rcv.retries,
+    State#state_rcv.hibernate,
+    State#state_rcv.host,
+    State#state_rcv.port,
+    State#state_rcv.protocol,
+    State#state_rcv.proto_opts,
+    State#state_rcv.bidi,
+    State#state_rcv.session_id,
+    State#state_rcv.request,
+    State#state_rcv.persistent,
+    State#state_rcv.timestamp,
+    State#state_rcv.starttime,
+    State#state_rcv.count,
+    State#state_rcv.maxcount,
+    State#state_rcv.ack_done,
+    State#state_rcv.send_timestamp,
+    State#state_rcv.page_timestamp,
+    State#state_rcv.acc,
+    State#state_rcv.buffer,
+    State#state_rcv.session,
+    State#state_rcv.datasize,
+    State#state_rcv.id,
+    State#state_rcv.size_mon_thresh,
+    State#state_rcv.size_mon,
+    State#state_rcv.dynvars,
+    State#state_rcv.clienttype,
+    State#state_rcv.transactions,
+    State#state_rcv.rate_limit,
+    State#state_rcv.dump,
+    State#state_rcv.connect_done,
+    State#state_rcv.dumped_call
+  ], ?INFO).
 
 %%--------------------------------------------------------------------
 %% Func: StateName/2
@@ -762,6 +802,109 @@ binary_to_num(Value) ->
     end.
 
 %%----------------------------------------------------------------------
+%% Func: send_message/11
+%% Purpose: sending the request message and receiving the response
+%%----------------------------------------------------------------------
+send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts) ->
+  ?LOGF("Sending message: ~p to ~s:~p (bear <-- ~s:~p), proto_opts: ~p ; ~n", [Message, Host, Port, Request#ts_request.host, Request#ts_request.port, ProtoOpts], ?INFO),
+  case catch send(Protocol, NewSocket, Message, Host, Port) of
+    ok ->
+      PageTimeStamp = case State#state_rcv.page_timestamp of
+                        0 -> Now; %first request of a page
+                        _ -> %page already started
+                          State#state_rcv.page_timestamp
+                      end,
+      ts_mon:add({ sum, size_sent, size_msg(Message)}),
+      ts_mon:sendmes({State#state_rcv.dump, self(), Message}),
+      NewState = State#state_rcv{socket   = NewSocket,
+        protocol = Protocol,
+        host     = Host,
+        request  = Request,
+        port     = Port,
+        count    = Count,
+        session  = NewSession,
+        proto_opts = ProtoOpts#proto_opts{is_first_connect = false},
+        page_timestamp= PageTimeStamp,
+        send_timestamp= Now,
+        timestamp= Now },
+      case Request#ts_request.ack of
+        bidi_ack ->
+          {next_state, think, NewState};
+        no_ack ->
+          {PTimeStamp, _} = update_stats_noack(NewState),
+          handle_next_action(NewState#state_rcv{ack_done=true, page_timestamp=PTimeStamp});
+        global ->
+          ts_timer:connected(self()),
+          {next_state, wait_ack, NewState};
+        _ ->
+          {next_state, wait_ack, NewState}
+      end;
+    {error, closed} when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
+      ?LOG("connection close while sending message!~n", ?NOTICE),
+      ts_mon:add({ count, error_connection_closed }),
+      Retries = State#state_rcv.retries +1,
+      handle_close_while_sending(State#state_rcv{socket=NewSocket,
+        protocol=Protocol,
+        host=Host,
+        session=NewSession,
+        retries=Retries,
+        port=Port});
+    {error, Reason}  when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
+      %% LOG only at INFO level since we report also an error to ts_mon
+      ?LOGF("Error: Unable to send data, reason: ~p~n",[Reason],?INFO),
+      CountName="error_send_"++atom_to_list(Reason),
+      ts_mon:add({ count, list_to_atom(CountName) }),
+      Retries = State#state_rcv.retries +1,
+      handle_timeout_while_sending(State#state_rcv{session=NewSession,retries=Retries});
+    {'EXIT', {noproc, _Rest}}  when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
+      ?LOG("EXIT from ssl app while sending message !~n", ?WARN),
+      Retries = State#state_rcv.retries +1,
+      handle_close_while_sending(State#state_rcv{socket=NewSocket,
+        protocol=Protocol,
+        session=NewSession,
+        retries=Retries,
+        host=Host,
+        port=Port});
+    Exit when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
+      ?LOGF("EXIT Error: Unable to send data, reason: ~p~n", [Exit], ?ERR),
+      ts_mon:add({ count, error_send }),
+      {stop, normal, State};
+    _Exit ->
+      ?LOGF("EXIT Error: Unable to send data, max_retries reached; reason: ~p~n", [_Exit], ?ERR),
+      ts_mon:add({ count, error_abort_max_send_retries }),
+      {stop, normal, State}
+  end.
+
+%%----------------------------------------------------------------------
+%% Func: send_request/11
+%% Purpose: sending the request message
+%%----------------------------------------------------------------------
+send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts, Param) ->
+  VB = string:str(Param#http_request.url, "https://"),
+  if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy ->
+    {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}] },State),
+    {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
+
+    NNS = NS#state_rcv{dumped_call = #dumped_call{
+          protocol = Protocol,
+          socket = NewSocket,
+          message = Message,
+          host = Host,
+          port = Port,
+          request = Request,
+          session = NewSession,
+          now = Now,
+          count = Count,
+          proto_opts = ProtoOpts},
+          connect_done = 1 },
+    ?LOGF("Sent CONNECT, protocol = ~p, connect done: ~p, use_proxy = ~p, message: ~p ; url = ~p ; ~n", [NNS#state_rcv.protocol, NNS#state_rcv.connect_done, Param#http_request.use_proxy, (NNS#state_rcv.dumped_call)#dumped_call.message, Param#http_request.url ], ?INFO),
+    {V1, V2, NNS};
+  true ->
+    debug_state(State, "sending request when CONNECT already done"),
+    send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts)
+  end.
+
+%%----------------------------------------------------------------------
 %% Func: handle_next_request/2
 %% Args: Request, State
 %%----------------------------------------------------------------------
@@ -809,74 +952,7 @@ handle_next_request(Request, State) ->
     ProtoOpts = State#state_rcv.proto_opts,
     case reconnect(Socket,Host,Port,{Protocol,ProtoOpts},State#state_rcv.ip) of
         {ok, NewSocket} ->
-            case catch send(Protocol, NewSocket, Message, Host, Port) of
-                ok ->
-                    PageTimeStamp = case State#state_rcv.page_timestamp of
-                                        0 -> Now; %first request of a page
-                                        _ -> %page already started
-                                            State#state_rcv.page_timestamp
-                                    end,
-                    ts_mon:add({ sum, size_sent, size_msg(Message)}),
-                    ts_mon:sendmes({State#state_rcv.dump, self(), Message}),
-                    NewState = State#state_rcv{socket   = NewSocket,
-                                               protocol = Protocol,
-                                               host     = Host,
-                                               request  = Request,
-                                               port     = Port,
-                                               count    = Count,
-                                               session  = NewSession,
-                                               proto_opts = ProtoOpts#proto_opts{is_first_connect = false},
-                                               page_timestamp= PageTimeStamp,
-                                               send_timestamp= Now,
-                                               timestamp= Now },
-                    case Request#ts_request.ack of
-                        bidi_ack ->
-                            {next_state, think, NewState};
-                        no_ack ->
-                            {PTimeStamp, _} = update_stats_noack(NewState),
-                            handle_next_action(NewState#state_rcv{ack_done=true, page_timestamp=PTimeStamp});
-                        global ->
-                            ts_timer:connected(self()),
-                            {next_state, wait_ack, NewState};
-                        _ ->
-                            {next_state, wait_ack, NewState}
-                        end;
-                {error, closed} when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
-                    ?LOG("connection close while sending message!~n", ?NOTICE),
-                    ts_mon:add({ count, error_connection_closed }),
-                    Retries = State#state_rcv.retries +1,
-                    handle_close_while_sending(State#state_rcv{socket=NewSocket,
-                                                               protocol=Protocol,
-                                                               host=Host,
-                                                               session=NewSession,
-                                                               retries=Retries,
-                                                               port=Port});
-                {error, Reason}  when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
-                    %% LOG only at INFO level since we report also an error to ts_mon
-                    ?LOGF("Error: Unable to send data, reason: ~p~n",[Reason],?INFO),
-                    CountName="error_send_"++atom_to_list(Reason),
-                    ts_mon:add({ count, list_to_atom(CountName) }),
-                    Retries = State#state_rcv.retries +1,
-                    handle_timeout_while_sending(State#state_rcv{session=NewSession,retries=Retries});
-                {'EXIT', {noproc, _Rest}}  when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
-                    ?LOG("EXIT from ssl app while sending message !~n", ?WARN),
-                    Retries = State#state_rcv.retries +1,
-                    handle_close_while_sending(State#state_rcv{socket=NewSocket,
-                                                               protocol=Protocol,
-                                                               session=NewSession,
-                                                               retries=Retries,
-                                                               host=Host,
-                                                               port=Port});
-                Exit when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
-                    ?LOGF("EXIT Error: Unable to send data, reason: ~p~n", [Exit], ?ERR),
-                    ts_mon:add({ count, error_send }),
-                    {stop, normal, State};
-                _Exit ->
-                    ?LOGF("EXIT Error: Unable to send data, max_retries reached; reason: ~p~n", [_Exit], ?ERR),
-                    ts_mon:add({ count, error_abort_max_send_retries }),
-                    {stop, normal, State}
-            end;
-
+          send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts, Param);
         {error, timeout} when State#state_rcv.retries < ProtoOpts#proto_opts.max_retries ->
             ts_mon:add({count, error_connect_timeout}),
 
@@ -1097,6 +1173,29 @@ set_thinktime(Think) ->
     Think.
 
 
+start_tls(NS) ->
+  ?LOGF("$tarting TLS on socket = ~p . ~n", [NS#state_rcv.socket], ?INFO),
+  {ok, SSL} = ts_ssl:connect(NS#state_rcv.socket, []),
+
+  NNS = NS#state_rcv{
+    socket = SSL,
+    protocol = ts_ssl,
+    host     = NS#state_rcv.host,
+    request  = NS#state_rcv.request,
+    port     = NS#state_rcv.port,
+    count    = NS#state_rcv.count,
+    session  = NS#state_rcv.session,
+    proto_opts = NS#state_rcv.proto_opts,
+    page_timestamp= NS#state_rcv.page_timestamp,
+    send_timestamp= NS#state_rcv.send_timestamp,
+    timestamp= NS#state_rcv.timestamp,
+    connect_done= 2
+  },
+
+  ?LOGF("TLS on socket has started = ~p ; protocol = ~p . ~n", [NNS#state_rcv.socket, NNS#state_rcv.protocol], ?INFO),
+
+  NNS.
+
 %%----------------------------------------------------------------------
 %% Func: handle_data_msg/2
 %% Args: Data (binary), State ('state_rcv' record)
@@ -1104,16 +1203,35 @@ set_thinktime(Think) ->
 %% Purpose: handle data received from a socket
 %%----------------------------------------------------------------------
 handle_data_msg(Data, State=#state_rcv{request=Req}) when Req#ts_request.ack==no_ack->
+    ?LOGF("data received while previous msg was no_ack: ~p ; ~n", [Data], ?INFO),
     ?Debug("data received while previous msg was no_ack~n"),
     ts_mon:rcvmes({State#state_rcv.dump, self(), Data}),
     {State, []};
 
 handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Type,maxcount=MaxCount,transactions=Transactions})
   when Req#ts_request.ack==parse->
+    ?LOGF("data received while previous msg was ack==parse: ~p ; ~n", [Data], ?INFO),
     ts_mon:rcvmes({Dump, self(), Data}),
 
     {NewState, Opts, Close} = Type:parse(Data, State),
     NewBuffer=set_new_buffer(NewState, Data),
+
+    if State#state_rcv.connect_done == 1 ->
+      {_S, _O, _C, Http} = ts_http_common:parse2(Data, State),
+
+
+      if element(1, Http#http.status) == 200 ->
+
+        NS = start_tls(State),
+        DR = NS#state_rcv.dumped_call,
+
+        {_V1, _V2, NNS} = send_message(NS, NS#state_rcv.protocol, NS#state_rcv.socket, DR#dumped_call.message, DR#dumped_call.host, DR#dumped_call.port, DR#dumped_call.request, DR#dumped_call.session, DR#dumped_call.now, DR#dumped_call.count, #proto_opts{}),
+        {NNS, []};
+      true ->
+        erlang:error(badproxyresponce)
+      end;
+
+    true ->
 
     ?DebugF("Session and dynvars are now ~p ~p~n",[NewState#state_rcv.session, NewState#state_rcv.dynvars]),
     case NewState#state_rcv.ack_done of
@@ -1166,7 +1284,8 @@ handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Typ
                 false->
                     {NewState#state_rcv{buffer=NewBuffer}, Opts}
             end
-    end;
+    end
+  end;
 
 handle_data_msg(closed,State) ->
     {State,[]};

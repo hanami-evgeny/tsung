@@ -85,6 +85,8 @@
 -define(size_mon_thresh, 524288).   % 512KB
 -define(short_timeout, 1).
 
+-record(dumped_call, {protocol, socket, message, host, port, request, session, now, count, proto_opts}).
+
 % state of ts_client gen_server
 -record(state_rcv,
         {socket=none, %
@@ -122,8 +124,10 @@
          clienttype, % module name (ts_jabber, etc.)
          transactions=[], % current transactions
          rate_limit, % rate limiting parameters
-         dump        % type of dump (full, light, none)
-        }).
+         dump,       % type of dump (full, light, none)
+         connect_done =  0,
+         dumped_call = none
+      }).
 
 -record(phase,
         {
