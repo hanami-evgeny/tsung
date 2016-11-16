@@ -1211,11 +1211,6 @@ handle_data_msg(Data, State=#state_rcv{request=Req}) when Req#ts_request.ack==no
 handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Type,maxcount=MaxCount,transactions=Transactions})
   when Req#ts_request.ack==parse->
     ?LOGF("data received while previous msg was ack==parse: ~p ; ~n", [Data], ?INFO),
-    ts_mon:rcvmes({Dump, self(), Data}),
-
-    {NewState, Opts, Close} = Type:parse(Data, State),
-    NewBuffer=set_new_buffer(NewState, Data),
-
     if State#state_rcv.connect_done == 1 ->
       {_S, _O, _C, Http} = ts_http_common:parse2(Data, State),
 
@@ -1232,8 +1227,12 @@ handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Typ
       end;
 
     true ->
+      ts_mon:rcvmes({Dump, self(), Data}),
 
-    ?DebugF("Session and dynvars are now ~p ~p~n",[NewState#state_rcv.session, NewState#state_rcv.dynvars]),
+      {NewState, Opts, Close} = Type:parse(Data, State),
+      NewBuffer=set_new_buffer(NewState, Data),
+
+      ?DebugF("Session and dynvars are now ~p ~p~n",[NewState#state_rcv.session, NewState#state_rcv.dynvars]),
     case NewState#state_rcv.ack_done of
         true ->
             ?DebugF("Response done:~p~n", [NewState#state_rcv.datasize]),
