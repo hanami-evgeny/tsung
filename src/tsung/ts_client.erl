@@ -806,7 +806,8 @@ binary_to_num(Value) ->
 %% Purpose: sending the request message and receiving the response
 %%----------------------------------------------------------------------
 send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts) ->
-  ?LOGF("Sending message: ~p to ~s:~p (bear <-- ~s:~p), proto_opts: ~p ; ~n", [Message, Host, Port, Request#ts_request.host, Request#ts_request.port, ProtoOpts], ?INFO),
+  ?LOGF("Sending message: ~p to ~s:~p (bear <-- ~s:~p), proto_opts: ~p, session_id: ~p ; ~n", [Message, Host, Port, Request#ts_request.host, Request#ts_request.port, ProtoOpts, State#state_rcv.session_id], ?INFO),
+
   case catch send(Protocol, NewSocket, Message, Host, Port) of
     ok ->
       PageTimeStamp = case State#state_rcv.page_timestamp of
@@ -881,7 +882,7 @@ send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
 %%----------------------------------------------------------------------
 send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts, Param) ->
   VB = string:str(Param#http_request.url, "https://"),
-  if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy ->
+  if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy andalso  ->
     {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}] },State),
     {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
 
@@ -898,6 +899,7 @@ send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
           proto_opts = ProtoOpts},
           connect_done = 1 },
     ?LOGF("Sent CONNECT, protocol = ~p, connect done: ~p, use_proxy = ~p, message: ~p ; url = ~p ; ~n", [NNS#state_rcv.protocol, NNS#state_rcv.connect_done, Param#http_request.use_proxy, (NNS#state_rcv.dumped_call)#dumped_call.message, Param#http_request.url ], ?INFO),
+    debug_state(State, "sending CONNECT ##"),
     {V1, V2, NNS};
   true ->
     debug_state(State, "sending request when CONNECT already done"),
