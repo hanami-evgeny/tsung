@@ -882,7 +882,7 @@ send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
 %%----------------------------------------------------------------------
 send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts, Param) ->
   VB = string:str(Param#http_request.url, "https://"),
-  if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy andalso  ->
+  if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy ->
     {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}] },State),
     {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
 
