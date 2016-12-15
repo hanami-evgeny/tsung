@@ -1195,7 +1195,7 @@ start_tls(NS) ->
     connect_done= 2
   },
 
-  ?LOGF("TLS on socket has started = ~p ; protocol = ~p . ~n", [NNS#state_rcv.socket, NNS#state_rcv.protocol], ?INFO),
+  ?LOGF("TLS on socket has started = ~p ; protocol = ~p, session_id: ~p . ~n", [NNS#state_rcv.socket, NNS#state_rcv.protocol, NNS#state_rcv.session_id], ?INFO),
 
   NNS.
 
@@ -1213,7 +1213,7 @@ handle_data_msg(Data, State=#state_rcv{request=Req}) when Req#ts_request.ack==no
 
 handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Type,maxcount=MaxCount,transactions=Transactions})
   when Req#ts_request.ack==parse->
-    ?LOGF("data received while previous msg was ack==parse: ~p ; ~n", [Data], ?INFO),
+    ?LOGF("data received while previous msg was ack==parse: ~p, protocol: ~p, socket: ~p, session_id: ~p ; ~n", [Data, State#state_rcv.protocol, State#state_rcv.socket, State#state_rcv.session_id], ?INFO),
     if State#state_rcv.connect_done == 1 ->
       {_S, _O, _C, Http} = ts_http_common:parse2(Data, State),
 
