@@ -807,7 +807,7 @@ binary_to_num(Value) ->
 %%----------------------------------------------------------------------
 send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts) ->
   ?LOGF("Sending message: ~p to ~s:~p (bear <-- ~s:~p), proto_opts: ~p, session_id: ~p, session: ~p, protocol: ~p ; ~n",
-    [Message, Host, Port, Request#ts_request.host, Request#ts_request.port, ProtoOpts, State#state_rcv.session_id, NNS#state_rcv.socket, NNS#state_rcv.protocol], ?INFO),
+    [Message, Host, Port, Request#ts_request.host, Request#ts_request.port, ProtoOpts, State#state_rcv.session_id, State#state_rcv.socket, State#state_rcv.protocol], ?INFO),
 
   case catch send(Protocol, NewSocket, Message, Host, Port) of
     ok ->
