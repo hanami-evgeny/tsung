@@ -1178,7 +1178,7 @@ set_thinktime(Think) ->
 
 start_tls(NS) ->
   PORT1 = inet:getopts(NS#state_rcv.socket, [port]),
-  ?LOGF("$tarting TLS on socket = ~p , port = ~p. ~n", [NS#state_rcv.socket], PORT1, ?INFO),
+  ?LOGF("$tarting TLS on socket = ~p , port = ~p. ~n", [NS#state_rcv.socket, PORT1], ?INFO),
   {ok, SSL} = ts_ssl:connect(NS#state_rcv.socket, []),
 
   NNS = NS#state_rcv{
