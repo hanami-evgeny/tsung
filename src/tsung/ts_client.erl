@@ -884,7 +884,7 @@ send_message(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
 send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSession, Now, Count, ProtoOpts, Param) ->
   VB = string:str(Param#http_request.url, "https://"),
   if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy ->
-    {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}] },State),
+    {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}, {"X-PORT", io_lib:format("~p",[NewSocket])}] },State),
     {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
 
     NNS = NS#state_rcv{dumped_call = #dumped_call{
@@ -1178,7 +1178,7 @@ set_thinktime(Think) ->
 
 start_tls(NS) ->
   PORT1 = inet:getopts(NS#state_rcv.socket, [port]),
-  ?LOGF("$tarting TLS on socket = ~p , port = ~p. ~n", [NS#state_rcv.socket, PORT1], ?INFO),
+  ?LOGF("$tarting TLS on socket = ~p . ~n", [NS#state_rcv.socket], ?INFO),
   {ok, SSL} = ts_ssl:connect(NS#state_rcv.socket, []),
 
   NNS = NS#state_rcv{
