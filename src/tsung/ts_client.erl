@@ -900,7 +900,7 @@ send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
           proto_opts = ProtoOpts},
           connect_done = 1 },
     ?LOGF("Sent CONNECT, protocol = ~p, connect done: ~p, use_proxy = ~p, message: ~p ; url = ~p ; ~n", [NNS#state_rcv.protocol, NNS#state_rcv.connect_done, Param#http_request.use_proxy, (NNS#state_rcv.dumped_call)#dumped_call.message, Param#http_request.url ], ?INFO),
-    debug_state(State, "sending CONNECT ##"),
+    debug_state(NNS, "sending CONNECT ##"),
     {V1, V2, NNS};
   true ->
     debug_state(State, "sending request when CONNECT already done"),
