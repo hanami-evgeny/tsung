@@ -44,6 +44,7 @@ start() ->
 start(_Type, _StartArgs) ->
 % error_logger:tty(false),
     ?LOG("open logfile  ~n",?DEB),
+    erlang:system_flag(backtrace_depth, 100),
     LogFileEnc = ts_config_server:decode_filename(?config(log_file)),
     LogFile = filename:join(LogFileEnc, atom_to_list(node()) ++ ".log"),
     LogDir = filename:dirname(LogFile),
