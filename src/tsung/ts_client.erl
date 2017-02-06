@@ -889,7 +889,7 @@ send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
     {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
     debug_port(NewSocket),
     debug_port(NS#state_rcv.socket),
-    
+
     NNS = NS#state_rcv{dumped_call = #dumped_call{
           protocol = Protocol,
           socket = NewSocket,
@@ -1222,7 +1222,7 @@ handle_data_msg(Data, State=#state_rcv{request=Req}) when Req#ts_request.ack==no
 
 handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Type,maxcount=MaxCount,transactions=Transactions})
   when Req#ts_request.ack==parse->
-    debug_port(NS#state_rcv.socket),
+    debug_port(State#state_rcv.socket),
     ?LOGF("data received while previous msg was ack==parse: ~p, protocol: ~p, socket: ~p, session_id: ~p ; ~n", [Data, State#state_rcv.protocol, State#state_rcv.socket, State#state_rcv.session_id], ?INFO),
     if State#state_rcv.connect_done == 1 ->
       {_S, _O, _C, Http} = ts_http_common:parse2(Data, State),
