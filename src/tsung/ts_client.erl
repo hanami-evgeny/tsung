@@ -885,8 +885,11 @@ send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
   VB = string:str(Param#http_request.url, "https://"),
   if State#state_rcv.protocol == ts_tcp andalso VB == 1 andalso State#state_rcv.connect_done == 0 andalso Param#http_request.use_proxy ->
     {NM, _NS} = ts_http:get_message(Param#http_request{method=connect, url = Param#http_request.host_header, headers = [{"Proxy-Connection", "Keep-Alive"}, {"X-PORT", io_lib:format("~p",[NewSocket])}] },State),
+    debug_port(NewSocket),
     {V1, V2, NS} = send_message(State, Protocol, NewSocket, NM, Host, Port, Request, NewSession, Now, Count, ProtoOpts),
-
+    debug_port(NewSocket),
+    debug_port(NS#state_rcv.socket),
+    
     NNS = NS#state_rcv{dumped_call = #dumped_call{
           protocol = Protocol,
           socket = NewSocket,
@@ -899,6 +902,7 @@ send_request(State, Protocol, NewSocket, Message, Host, Port, Request, NewSessio
           count = Count,
           proto_opts = ProtoOpts},
           connect_done = 1 },
+    debug_port(NewSocket),
     ?LOGF("Sent CONNECT, protocol = ~p, connect done: ~p, use_proxy = ~p, message: ~p ; url = ~p ; ~n", [NNS#state_rcv.protocol, NNS#state_rcv.connect_done, Param#http_request.use_proxy, (NNS#state_rcv.dumped_call)#dumped_call.message, Param#http_request.url ], ?INFO),
     debug_state(NNS, "sending CONNECT ##"),
     {V1, V2, NNS};
@@ -1175,10 +1179,14 @@ set_thinktime(Think) ->
     erlang:start_timer(Think, self(), end_thinktime ),
     Think.
 
+debug_port(Socket) ->
+  PORT1 = inet:getopts(Socket, [port]),
+  ?LOGF("PORT1 = ~p; ~n", [PORT1], ?INFO).
 
 start_tls(NS) ->
-  PORT1 = inet:getopts(NS#state_rcv.socket, [port]),
+%%  PORT1 = inet:getopts(NS#state_rcv.socket, [port]),
   ?LOGF("$tarting TLS on socket = ~p . ~n", [NS#state_rcv.socket], ?INFO),
+  debug_port(NS#state_rcv.socket),
   {ok, SSL} = ts_ssl:connect(NS#state_rcv.socket, []),
 
   NNS = NS#state_rcv{
@@ -1214,10 +1222,10 @@ handle_data_msg(Data, State=#state_rcv{request=Req}) when Req#ts_request.ack==no
 
 handle_data_msg(Data,State=#state_rcv{dump=Dump,request=Req,id=Id,clienttype=Type,maxcount=MaxCount,transactions=Transactions})
   when Req#ts_request.ack==parse->
+    debug_port(NS#state_rcv.socket),
     ?LOGF("data received while previous msg was ack==parse: ~p, protocol: ~p, socket: ~p, session_id: ~p ; ~n", [Data, State#state_rcv.protocol, State#state_rcv.socket, State#state_rcv.session_id], ?INFO),
     if State#state_rcv.connect_done == 1 ->
       {_S, _O, _C, Http} = ts_http_common:parse2(Data, State),
-
 
       if element(1, Http#http.status) == 200 ->
 
