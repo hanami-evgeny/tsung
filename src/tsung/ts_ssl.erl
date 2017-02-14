@@ -43,6 +43,7 @@ send(Socket, Data, _Opts)  ->
 
 close(none)   -> ok;
 close(Socket) ->
+  ?LOGF("### Closing ssl socket: ~p ###",[Socket],?INFO),
     ssl:close(Socket).
 
 % set_opts/2 -> socket()

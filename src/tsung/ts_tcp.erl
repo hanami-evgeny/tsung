@@ -59,6 +59,7 @@ send(Socket, Data, _Opts)  ->
 
 close(none)   -> ok;
 close(Socket) ->
+  ?LOGF("### Closing tcp socket: ~p ###",[Socket],?INFO),
     gen_tcp:close(Socket).
 
 % set_opts/2 -> socket()
